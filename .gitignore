@@ -1,0 +1,25 @@
+# Build and target directories
+target/
+build/
+*.class
+
+# Logs
+*.log
+
+# IDE & Editor Settings
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.settings/
+.classpath
+.project
+.factorypath
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Exclude interactive player console from git tracking
+src/main/resources/static/player.html
