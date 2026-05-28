@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamForge — Interactive Playback Console</title>
+    
+    <!-- Google Fonts: Outfit & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Hls.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+    <style>
+        :root {
+            --bg-base: #0b0a15;
+            --bg-surface: rgba(22, 21, 38, 0.7);
+            --bg-card: rgba(30, 29, 52, 0.4);
+            --border-glow: rgba(139, 92, 246, 0.2);
+            --border-glow-hover: rgba(139, 92, 246, 0.4);
+            --primary: #8b5cf6;
+            --primary-hover: #a78bfa;
+            --primary-glow: rgba(139, 92, 246, 0.3);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            
+            --success: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.2);
+            --warning: #f59e0b;
+            --warning-glow: rgba(245, 158, 11, 0.2);
+            --danger: #ef4444;
+            --danger-glow: rgba(239, 68, 68, 0.2);
+            --info: #3b82f6;
+            --info-glow: rgba(59, 130, 246, 0.2);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.15) 0%, transparent 45%);
+            background-attachment: fixed;
+        }
+
+        header {
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(11, 10, 21, 0.8);
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-icon {
+            background: linear-gradient(135deg, var(--primary), #6366f1);
+            color: white;
+            padding: 0.5rem;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 20px var(--primary-glow);
+        }
+
+        h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #ffffff, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .system-status {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .refresh-btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border-glow);
+            color: var(--text-main);
+            padding: 0.6rem 1.2rem;
+            border-radius: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(8px);
+        }
+
+        .refresh-btn:hover {
+            border-color: var(--primary);
+            box-shadow: 0 0 10px var(--primary-glow);
+            transform: translateY(-1px);
+        }
+
+        .refresh-btn:active {
+            transform: translateY(1px);
+        }
+
+        .container {
+            max-width: 1400px;
+            width: 100%;
+            margin: 2rem auto;
+            padding: 0 1.5rem;
+            flex-grow: 1;
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 2rem;
+        }
+
+        /* Glassmorphic Panel Base */
+        .glass-panel {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-glow);
+            border-radius: 20px;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.15rem;
+            font-weight: 600;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Left Side: Video List */
+        .video-list-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            max-height: calc(100vh - 220px);
+        }
+
+        /* Custom Scrollbar */
+        .video-list-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        .video-list-container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .video-list-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+        .video-list-container::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .video-item {
+            background: var(--bg-card);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .video-item:hover {
+            border-color: var(--border-glow-hover);
+            transform: translateY(-2px);
+            background: rgba(30, 29, 52, 0.6);
+        }
+
+        .video-item.active {
+            border-color: var(--primary);
+            background: rgba(139, 92, 246, 0.12);
+            box-shadow: inset 0 0 12px rgba(139, 92, 246, 0.1);
+        }
+
+        .video-thumb-placeholder {
+            width: 70px;
+            height: 70px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .video-thumb-placeholder img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .video-info {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-width: 0;
+        }
+
+        .video-title-text {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: white;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .video-meta-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-top: 0.4rem;
+        }
+
+        .badge {
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .badge-processed {
+            background-color: var(--success-glow);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-processing {
+            background-color: var(--warning-glow);
+            color: var(--warning);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            animation: pulse 1.5s infinite;
+        }
+
+        .badge-uploaded {
+            background-color: var(--info-glow);
+            color: var(--info);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        .badge-failed {
+            background-color: var(--danger-glow);
+            color: var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.7; }
+            50% { opacity: 1; }
+            100% { opacity: 0.7; }
+        }
+
+        .video-duration {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .reprocess-icon-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 0.25rem;
+            border-radius: 6px;
+            transition: all 0.2s;
+            align-self: flex-start;
+        }
+
+        .reprocess-icon-btn:hover {
+            color: var(--primary-hover);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* Right Side: Player Section */
+        .player-main-area {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .player-wrapper {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16/9;
+            background: #000;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border-glow);
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .empty-player-state {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1.25rem;
+            color: var(--text-muted);
+            text-align: center;
+            background: radial-gradient(circle, rgba(20, 18, 38, 0.9) 0%, #000000 100%);
+            padding: 2rem;
+            z-index: 10;
+        }
+
+        .empty-player-state i {
+            color: var(--primary);
+            filter: drop-shadow(0 0 10px var(--primary-glow));
+        }
+
+        .empty-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: white;
+        }
+
+        .quality-selector-overlay {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            z-index: 20;
+            display: none;
+        }
+
+        .quality-dropdown {
+            background: rgba(15, 14, 28, 0.85);
+            border: 1px solid var(--border-glow);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.85rem;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .quality-dropdown:hover {
+            border-color: var(--primary);
+            box-shadow: 0 0 8px var(--primary-glow);
+        }
+
+        /* Detail Cards Below Player */
+        .video-details-card {
+            padding: 1.5rem;
+        }
+
+        .detail-title-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .video-detail-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: white;
+        }
+
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.25rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding-top: 1.25rem;
+        }
+
+        .meta-field {
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .meta-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .meta-value {
+            font-size: 0.95rem;
+            color: white;
+            font-weight: 500;
+        }
+
+        /* Toasts Container */
+        .toast-container {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            z-index: 1000;
+        }
+
+        .toast {
+            background: rgba(22, 21, 38, 0.95);
+            border: 1px solid var(--border-glow);
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            min-width: 300px;
+            transform: translateX(120%);
+            transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            backdrop-filter: blur(10px);
+        }
+
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .toast-success i { color: var(--success); }
+        .toast-warning i { color: var(--warning); }
+        .toast-error i { color: var(--danger); }
+        .toast-info i { color: var(--info); }
+
+        .spinner {
+            animation: rotate 2s linear infinite;
+            width: 24px;
+            height: 24px;
+        }
+
+        .spinner .path {
+            stroke: var(--primary);
+            stroke-linecap: round;
+            animation: dash 1.5s ease-in-out infinite;
+        }
+
+        @keyframes rotate {
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes dash {
+            0% {
+                stroke-dasharray: 1, 150;
+                stroke-dashoffset: 0;
+            }
+            50% {
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -35;
+            }
+            100% {
+                stroke-dasharray: 90, 150;
+                stroke-dashoffset: -124;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-container">
+            <div class="logo-icon">
+                <i data-lucide="play" fill="white"></i>
+            </div>
+            <h1>StreamForge <span style="font-weight: 300; font-size: 1.1rem; margin-left: 0.5rem; color: var(--text-muted);">| Media Console</span></h1>
+        </div>
+        
+        <div class="system-status">
+            <button class="refresh-btn" onclick="fetchVideos()">
+                <i data-lucide="refresh-cw" id="refresh-icon"></i>
+                Refresh Catalog
+            </button>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Video List Panel -->
+        <div class="glass-panel">
+            <div class="panel-header">
+                <div class="panel-title">
+                    <i data-lucide="video"></i> Available Catalog
+                </div>
+            </div>
+            <div class="video-list-container" id="video-list">
+                <!-- Dynamic Content Loaded Here -->
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; gap: 1rem; color: var(--text-muted);">
+                    <svg class="spinner" viewBox="0 0 50 50">
+                        <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="4"></circle>
+                    </svg>
+                    Loading catalog...
+                </div>
+            </div>
+        </div>
+
+        <!-- Player & Details Section -->
+        <div class="player-main-area">
+            <div class="player-wrapper">
+                <div class="quality-selector-overlay" id="quality-overlay">
+                    <select class="quality-dropdown" id="quality-selector" onchange="changeQuality(this.value)">
+                        <option value="-1">Auto Quality</option>
+                    </select>
+                </div>
+                
+                <div class="empty-player-state" id="empty-state">
+                    <i data-lucide="clapperboard" size="64"></i>
+                    <div class="empty-title">Ready for Playback</div>
+                    <div style="font-size: 0.9rem;">Select a video from the catalog on the left to start streaming.</div>
+                </div>
+
+                <video id="video-player" controls></video>
+            </div>
+
+            <!-- Metadata Details Panel -->
+            <div class="glass-panel video-details-card" id="details-panel" style="display: none;">
+                <div class="detail-title-section">
+                    <div>
+                        <div class="video-detail-title" id="detail-title">Video Title</div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;" id="detail-id">ID: </div>
+                    </div>
+                    <div id="detail-status-badge"></div>
+                </div>
+                
+                <div class="metadata-grid">
+                    <div class="meta-field">
+                        <span class="meta-label">Resolution</span>
+                        <span class="meta-value" id="meta-resolution">-</span>
+                    </div>
+                    <div class="meta-field">
+                        <span class="meta-label">Duration</span>
+                        <span class="meta-value" id="meta-duration">-</span>
+                    </div>
+                    <div class="meta-field">
+                        <span class="meta-label">Size</span>
+                        <span class="meta-value" id="meta-size">-</span>
+                    </div>
+                    <div class="meta-field">
+                        <span class="meta-label">Video Codec</span>
+                        <span class="meta-value" id="meta-vcodec">-</span>
+                    </div>
+                    <div class="meta-field">
+                        <span class="meta-label">Audio Codec</span>
+                        <span class="meta-value" id="meta-acodec">-</span>
+                    </div>
+                    <div class="meta-field">
+                        <span class="meta-label">Frame Rate</span>
+                        <span class="meta-value" id="meta-fps">-</span>
+                    </div>
+                    <div class="meta-field">
+                        <span class="meta-label">Bitrate</span>
+                        <span class="meta-value" id="meta-bitrate">-</span>
+                    </div>
+                    <div class="meta-field">
+                        <span class="meta-label">Created At</span>
+                        <span class="meta-value" id="meta-created">-</span>
+                    </div>
+                </div>
+                
+                <!-- Error display block if processing failed -->
+                <div id="error-block" style="margin-top: 1.5rem; padding: 1rem; border-radius: 10px; background: var(--danger-glow); border: 1px solid rgba(239, 68, 68, 0.2); display: none;">
+                    <div style="font-size: 0.85rem; font-weight: 700; color: var(--danger); display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem;">
+                        <i data-lucide="alert-triangle" size="16"></i> Processing Failure
+                    </div>
+                    <div style="font-size: 0.85rem; color: var(--text-main);" id="error-message">Error details...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+        let currentHls = null;
+        let selectedVideoId = null;
+        let isFetching = false;
+
+        // Initialize icons
+        lucide.createIcons();
+
+        // Load videos on load
+        window.addEventListener('DOMContentLoaded', () => {
+            fetchVideos();
+            // Poll for updates every 10 seconds to show dynamic processing updates
+            setInterval(fetchVideosSilently, 10000);
+        });
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            
+            let icon = 'info';
+            if (type === 'success') icon = 'check-circle';
+            if (type === 'warning') icon = 'alert-triangle';
+            if (type === 'error') icon = 'x-circle';
+
+            toast.innerHTML = `
+                <i data-lucide="${icon}"></i>
+                <div>${message}</div>
+            `;
+            container.appendChild(toast);
+            lucide.createIcons({ props: { size: 18 } });
+            
+            // Trigger animation
+            setTimeout(() => toast.classList.add('show'), 50);
+            
+            // Remove after 4s
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 400);
+            }, 4000);
+        }
+
+        function formatDuration(sec) {
+            if (!sec) return '-';
+            const minutes = Math.floor(sec / 60);
+            const seconds = Math.floor(sec % 60);
+            return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes) return '-';
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            return parseFloat((bytes / Math.pow(1024, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function fetchVideos() {
+            if (isFetching) return;
+            isFetching = true;
+            
+            const refreshIcon = document.getElementById('refresh-icon');
+            refreshIcon.style.animation = 'rotate 1s linear infinite';
+            
+            fetch('/api/videos?size=50')
+                .then(res => res.json())
+                .then(page => {
+                    renderCatalog(page.content);
+                    showToast('Catalog refreshed successfully', 'success');
+                })
+                .catch(err => {
+                    console.error(err);
+                    showToast('Failed to fetch catalog', 'error');
+                })
+                .finally(() => {
+                    isFetching = false;
+                    refreshIcon.style.animation = '';
+                });
+        }
+
+        function fetchVideosSilently() {
+            fetch('/api/videos?size=50')
+                .then(res => res.json())
+                .then(page => {
+                    renderCatalog(page.content, true);
+                })
+                .catch(err => console.error(err));
+        }
+
+        function renderCatalog(videos, isSilent = false) {
+            const listEl = document.getElementById('video-list');
+            if (videos.length === 0) {
+                listEl.innerHTML = `
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; gap: 1rem; color: var(--text-muted); text-align: center; padding: 1.5rem;">
+                        <i data-lucide="inbox" size="32"></i>
+                        No videos uploaded yet. Use the upload API to ingest.
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+
+            // Keep track of scroll position
+            const scrollPos = listEl.scrollTop;
+
+            let html = '';
+            videos.forEach(video => {
+                const isActive = video.id === selectedVideoId ? 'active' : '';
+                
+                let statusBadge = '';
+                if (video.status === 'PROCESSED') {
+                    statusBadge = `<span class="badge badge-processed"><i data-lucide="check" size="10"></i>Ready</span>`;
+                } else if (video.status === 'PROCESSING') {
+                    statusBadge = `<span class="badge badge-processing"><i data-lucide="loader" size="10"></i>Processing</span>`;
+                } else if (video.status === 'UPLOADED') {
+                    statusBadge = `<span class="badge badge-uploaded"><i data-lucide="clock" size="10"></i>Queued</span>`;
+                } else {
+                    statusBadge = `<span class="badge badge-failed"><i data-lucide="alert-octagon" size="10"></i>Failed</span>`;
+                }
+
+                // Show reprocess button if failed
+                const reprocessButton = video.status === 'FAILED' 
+                    ? `<button class="reprocess-icon-btn" onclick="reprocessVideo(event, '${video.id}')" title="Reprocess Video"><i data-lucide="rotate-ccw" size="14"></i></button>`
+                    : '';
+
+                const thumbContent = video.thumbnailUrl 
+                    ? `<img src="${video.thumbnailUrl}" alt="thumbnail"/>`
+                    : `<i data-lucide="film" size="20"></i>`;
+
+                html += `
+                    <div class="video-item ${isActive}" onclick="selectVideo('${video.id}', '${video.status}')">
+                        <div class="video-thumb-placeholder">
+                            ${thumbContent}
+                        </div>
+                        <div class="video-info">
+                            <div class="video-title-text" title="${video.title}">${video.title}</div>
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 0.25rem;">
+                                <div class="video-duration">
+                                    <i data-lucide="clock" size="10"></i>
+                                    ${formatDuration(video.durationSeconds)}
+                                    ${video.resolution ? `· ${video.resolution}` : ''}
+                                </div>
+                                ${reprocessButton}
+                            </div>
+                            <div class="video-meta-tags">
+                                ${statusBadge}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            listEl.innerHTML = html;
+            listEl.scrollTop = scrollPos;
+            lucide.createIcons();
+        }
+
+        function reprocessVideo(event, videoId) {
+            event.stopPropagation(); // Avoid selecting the item
+            showToast('Triggering reprocessing...', 'info');
+            
+            fetch(`/api/videos/${videoId}/reprocess`, { method: 'POST' })
+                .then(res => {
+                    if (res.ok) {
+                        showToast('Reprocessing started', 'success');
+                        fetchVideos();
+                    } else {
+                        showToast('Failed to trigger reprocessing', 'error');
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    showToast('Failed to trigger reprocessing', 'error');
+                });
+        }
+
+        function selectVideo(videoId, status) {
+            if (selectedVideoId === videoId) return;
+            selectedVideoId = videoId;
+            
+            // Mark list item as active
+            document.querySelectorAll('.video-item').forEach(el => el.classList.remove('active'));
+            const activeItem = document.querySelector(`.video-item[onclick*="${videoId}"]`);
+            if (activeItem) activeItem.classList.add('active');
+
+            // Hide empty state and details, then reset player
+            document.getElementById('empty-state').style.display = 'none';
+            document.getElementById('quality-overlay').style.display = 'none';
+            
+            const player = document.getElementById('video-player');
+            player.pause();
+            if (currentHls) {
+                currentHls.destroy();
+                currentHls = null;
+            }
+
+            // Fetch detail immediately
+            fetch(`/api/videos/${videoId}`)
+                .then(res => res.json())
+                .then(data => {
+                    renderDetails(data);
+                })
+                .catch(err => {
+                    console.error(err);
+                    showToast('Error loading video details', 'error');
+                });
+
+            // If processed, fetch playback and load in player
+            if (status === 'PROCESSED') {
+                loadPlayback(videoId);
+            } else {
+                // Show info message in player area
+                document.getElementById('empty-state').style.display = 'flex';
+                document.getElementById('empty-state').innerHTML = `
+                    <i data-lucide="loader" size="64" class="spinner"></i>
+                    <div class="empty-title">Processing Media</div>
+                    <div style="font-size: 0.9rem;">This video is currently transcoding. Playback will be available once complete.</div>
+                `;
+                lucide.createIcons();
+            }
+        }
+
+        function renderDetails(v) {
+            const panel = document.getElementById('details-panel');
+            panel.style.display = 'block';
+
+            document.getElementById('detail-title').innerText = v.title;
+            document.getElementById('detail-id').innerText = `ID: ${v.id}`;
+            
+            // Status badge
+            const badgeContainer = document.getElementById('detail-status-badge');
+            if (v.status === 'PROCESSED') {
+                badgeContainer.innerHTML = `<span class="badge badge-processed"><i data-lucide="check" size="10"></i>Ready</span>`;
+            } else if (v.status === 'PROCESSING') {
+                badgeContainer.innerHTML = `<span class="badge badge-processing"><i data-lucide="loader" size="10"></i>Processing</span>`;
+            } else if (v.status === 'UPLOADED') {
+                badgeContainer.innerHTML = `<span class="badge badge-uploaded"><i data-lucide="clock" size="10"></i>Queued</span>`;
+            } else {
+                badgeContainer.innerHTML = `<span class="badge badge-failed"><i data-lucide="alert-octagon" size="10"></i>Failed</span>`;
+            }
+
+            // Text fields
+            document.getElementById('meta-resolution').innerText = (v.width && v.height) ? `${v.width}x${v.height}` : 'Pending';
+            document.getElementById('meta-duration').innerText = formatDuration(v.durationSeconds);
+            document.getElementById('meta-size').innerText = formatBytes(v.fileSizeBytes);
+            document.getElementById('meta-vcodec').innerText = v.codec || 'Pending';
+            document.getElementById('meta-acodec').innerText = v.audioCodec || 'Pending';
+            document.getElementById('meta-fps').innerText = v.fps ? Math.round(v.fps) + ' fps' : 'Pending';
+            document.getElementById('meta-bitrate').innerText = v.bitrateKbps ? Math.round(v.bitrateKbps) + ' kbps' : 'Pending';
+            document.getElementById('meta-created').innerText = new Date(v.createdAt).toLocaleString();
+
+            // Error display
+            const errorBlock = document.getElementById('error-block');
+            if (v.status === 'FAILED' && v.errorMessage) {
+                document.getElementById('error-message').innerText = v.errorMessage;
+                errorBlock.style.display = 'block';
+            } else {
+                errorBlock.style.display = 'none';
+            }
+
+            lucide.createIcons();
+        }
+
+        function loadPlayback(videoId) {
+            fetch(`/api/videos/${videoId}/playback`)
+                .then(res => res.json())
+                .then(data => {
+                    const player = document.getElementById('video-player');
+                    const url = data.masterManifestUrl;
+
+                    showToast('Loading HLS stream...', 'info');
+
+                    if (Hls.isSupported()) {
+                        currentHls = new Hls({
+                            maxBufferLength: 30,
+                            enableWorker: true
+                        });
+                        currentHls.loadSource(url);
+                        currentHls.attachMedia(player);
+                        
+                        currentHls.on(Hls.Events.MANIFEST_PARSED, function() {
+                            populateQualitySelector();
+                            document.getElementById('quality-overlay').style.display = 'block';
+                            player.play();
+                            showToast('Playback started', 'success');
+                        });
+
+                        currentHls.on(Hls.Events.ERROR, function(event, data) {
+                            if (data.fatal) {
+                                switch (data.type) {
+                                    case Hls.ErrorTypes.NETWORK_ERROR:
+                                        showToast('Network error, attempting recovery...', 'warning');
+                                        currentHls.startLoad();
+                                        break;
+                                    case Hls.ErrorTypes.MEDIA_ERROR:
+                                        showToast('Media playback error, attempting recovery...', 'warning');
+                                        currentHls.recoverMediaError();
+                                        break;
+                                    default:
+                                        showToast('Fatal playback error occurred', 'error');
+                                        currentHls.destroy();
+                                        break;
+                                }
+                            }
+                        });
+                    } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+                        // Native HLS (Safari, iOS)
+                        player.src = url;
+                        player.addEventListener('loadedmetadata', function() {
+                            player.play();
+                            showToast('Native playback started', 'success');
+                        });
+                    } else {
+                        showToast('HLS playback is not supported by your browser', 'error');
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    showToast('Failed to fetch playback details', 'error');
+                });
+        }
+
+        function populateQualitySelector() {
+            const select = document.getElementById('quality-selector');
+            select.innerHTML = '<option value="-1">Auto Quality</option>';
+            
+            if (!currentHls) return;
+
+            const levels = currentHls.levels;
+            levels.forEach((level, index) => {
+                const label = `${level.height}p (${Math.round(level.bitrate / 1000)}kbps)`;
+                const option = document.createElement('option');
+                option.value = index;
+                option.text = label;
+                select.appendChild(option);
+            });
+        }
+
+        function changeQuality(levelIndex) {
+            if (!currentHls) return;
+            currentHls.currentLevel = parseInt(levelIndex);
+            
+            if (levelIndex == -1) {
+                showToast('Switched to Auto Quality', 'info');
+            } else {
+                const level = currentHls.levels[levelIndex];
+                showToast(`Switched quality to ${level.height}p`, 'info');
+            }
+        }
+    </script>
+</body>
+</html>

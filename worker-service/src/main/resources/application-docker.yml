@@ -1,0 +1,15 @@
+# Docker profile — overrides for containerized deployment
+# Activated via: --spring.profiles.active=docker
+
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/streamforge
+    username: streamforge
+    password: streamforge_dev
+
+minio:
+  endpoint: http://minio:9000
+
+ffmpeg:
+  path: /usr/bin/ffmpeg
+  ffprobe-path: /usr/bin/ffprobe

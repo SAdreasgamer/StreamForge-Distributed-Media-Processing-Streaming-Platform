@@ -1,19 +1,17 @@
 # StreamForge — Phase 2: Introduce Kafka & Async Processing
 
-This document outlines the proposed changes, architecture updates, and verification plan for **Phase 2 (Decoupled Kafka Architecture)** of the StreamForge distributed media platform.
+This document outlines the detailed system architecture, file changes, and verification plan for **Phase 2 (Decoupled Kafka Architecture)** of the StreamForge distributed media platform.
 
 ---
 
 ## 🎯 Goal Description
 
-The goal of Phase 2 is to decouple the video upload process from the heavy media processing tasks (metadata extraction, transcoding, and thumbnail generation) using an event-driven architecture powered by **Apache Kafka**. 
+The goal of Phase 2 is to decouple the video upload flow from the heavy media processing tasks (metadata extraction, transcoding, and thumbnail generation) using an event-driven architecture powered by **Apache Kafka**.
 
-We will refactor our monolith into a **multi-module Maven project** consisting of:
-1. `common` module: Entities, repositories, DTOs, configurations, and shared utilities.
-2. `upload-service`: Handles HTTP requests for upload sessions, saves chunked files, and publishes `media.uploaded` events to Kafka.
-3. `worker-service`: Listens to Kafka topics, runs FFmpeg/FFprobe operations asynchronously, and publishes completion/failure events.
-
-Additionally, we will implement resilient messaging patterns: **Idempotent processing**, **Exponential backoff retries**, and **Dead Letter Queues (DLQ)**.
+We will refactor the existing monolith codebase into a **Maven Multi-Module Project**:
+1. **`common`**: Shared libraries containing JPA entities, repositories, configurations (MinIO/S3 connection, database), exceptions, and Flyway database migrations.
+2. **`upload-service`**: Exposes HTTP endpoints for resumable upload sessions, file assembly, video listings, HLS streaming proxy, and publishes processing request events to Kafka.
+3. **`worker-service`**: Headless runner subscribing to Kafka topics. Downloads raw files from MinIO, executes FFmpeg/FFprobe operations in local temp space, uploads processed manifests/segments, updates the database, and supports retry/DLQ patterns.
 
 ---
 
@@ -21,23 +19,39 @@ Additionally, we will implement resilient messaging patterns: **Idempotent proce
 
 > [!IMPORTANT]
 > **Maven Multi-Module Restructuring:**
-> This phase transforms the project file hierarchy. Files currently under `src/main/java/` will be moved into respective submodules (`common`, `upload-service`, `worker-service`).
+> This phase completely alters the project directory. All current source files under `src/main/java/` will be moved into their respective modules.
 >
-> **Shared Database Schema for Phase 2:**
-> Both the `upload-service` and `worker-service` will initially share the same PostgreSQL database to maintain simple transactional updates on video statuses. This will be fully separated into individual database instances per service in Phase 3.
+> **Shared Database & Object Storage:**
+> In Phase 2, both `upload-service` and `worker-service` will connect to the same PostgreSQL database (`streamforge`) and MinIO instance. They will communicate status changes transactionally via database updates.
+>
+> **Single-Node KRaft Kafka:**
+> We will add a single-node Kafka broker using KRaft mode to our local Docker Compose stack, eliminating Zookeeper dependency for simplicity.
+
+---
+
+## 🙋 Open Questions
+
+> [!IMPORTANT]
+> **1. Topic Partitions & Replication:**
+> For the local development stack, we will use a partition count of **3** and a replication factor of **1** for all topics. Let me know if you would prefer different numbers for scaling tests.
+>
+> **2. Sequential vs. Parallel Worker Execution:**
+> Currently, the worker performs: **Metadata Extraction $\rightarrow$ Transcoding $\rightarrow$ Thumbnail Generation** sequentially inside a single consumer callback. In Phase 3, this will be decomposed into individual microservices communicating via distinct Kafka topics (saga choreography). For Phase 2, we will orchestrate this sequentially in the `worker-service` consumer to keep Kafka topology simple.
 
 ---
 
 ## 🛠 Proposed Changes
 
-We will introduce a Maven parent POM in the root and create three Maven submodules:
+### 1. Project Hierarchy & Parent POM
+
+We will transform the root directory into a Maven parent POM.
 
 ```mermaid
 graph TD
     Parent["Parent POM (streamforge)"]
     Common["common (Library)"]
-    Upload["upload-service (Executable)"]
-    Worker["worker-service (Executable)"]
+    Upload["upload-service (Web/Producer)"]
+    Worker["worker-service (Consumer/FFmpeg)"]
 
     Parent --> Common
     Parent --> Upload
@@ -46,30 +60,63 @@ graph TD
     Worker --> Common
 ```
 
-### 1. Infrastructure & Parent Configuration
-
 #### [MODIFY] [pom.xml](file:///Users/shreyanand/dev_proj/streamForage/pom.xml)
-* Re-scope the root `pom.xml` to be a parent POM with `<packaging>pom</packaging>`.
-* Declare submodules: `<modules><module>common</module><module>upload-service</module><module>worker-service</module></modules>`.
-* Centralize dependency management (Spring Boot dependencies, Lombok, MapStruct, MinIO, Spring Kafka).
+* Set packaging type to `<packaging>pom</packaging>`.
+* Define submodules:
+  ```xml
+  <modules>
+      <module>common</module>
+      <module>upload-service</module>
+      <module>worker-service</module>
+  </modules>
+  ```
+* Move dependencies into `<dependencyManagement>` to enforce version consistency (Spring Boot starters, Lombok, MapStruct, MinIO SDK, Spring Kafka).
 
 #### [MODIFY] [docker-compose.yml](file:///Users/shreyanand/dev_proj/streamForage/docker-compose.yml)
-* Add a single-node Kafka broker using KRaft (no ZooKeeper needed for simplicity) such as `confluentinc/cp-kafka:7.5.0`.
-* Add environment variables for Kafka connection details.
-* Add healthcheck configurations for Kafka.
-* Update `streamforge-app` to deploy two separate services: `upload-service` and `worker-service`.
+* Add Apache Kafka broker service with KRaft setup:
+  ```yaml
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: streamforge-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REREPLICATION_FACTOR: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_LATEST_METHOD: 'kraft'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  ```
+* Update `streamforge-app` to deploy two independent containers:
+  * `upload-service` (exposing port `8080`)
+  * `worker-service` (exposing port `8081` for Actuator metrics)
 
 ---
 
 ### 2. Common Submodule (`common`)
 
-A library module containing core JPA entities, Spring Data repositories, shared exceptions, and database migrations.
+A library containing database definitions, entities, repository interfaces, shared configurations, and migrations.
 
 #### [NEW] [pom.xml](file:///Users/shreyanand/dev_proj/streamForage/common/pom.xml)
-* Configure dependencies: Spring Boot Starter Data JPA, PostgreSQL driver, Flyway, Validation, MinIO SDK, Lombok, MapStruct.
+* Configure build package dependencies: Spring Boot Starter Data JPA, PostgreSQL driver, Flyway, Validation, MinIO SDK, Lombok.
 
-#### [NEW] Flyway Migration `src/main/resources/db/migration/V4__create_processing_jobs_table.sql`
-* Create a table `processing_jobs` to track status of asynchronous workers:
+#### [NEW] Flyway Migration `common/src/main/resources/db/migration/V4__create_processing_jobs_table.sql`
+* Create a tracking table `processing_jobs` to enforce idempotent processing and keep track of consumer job states:
   ```sql
   CREATE TABLE processing_jobs (
       id UUID PRIMARY KEY,
@@ -85,104 +132,152 @@ A library module containing core JPA entities, Spring Data repositories, shared 
   CREATE INDEX idx_processing_jobs_video ON processing_jobs(video_id);
   ```
 
-#### [MOVE] Core Classes
-* Move all JPA Entities (`Video`, `UploadSession`, `VideoVariant`), Enums, and Repository interfaces into `common` under `com.streamforge.model` and `com.streamforge.repository`.
-* Move generic configurations: `MinioConfig`, `MinioConfigProperties`, and `StorageService` to share storage capabilities.
+#### [MOVE] Core Shared Files
+* Move files from existing codebase into `common` under package `com.streamforge`:
+  * **Model Entities**: `Video`, `UploadSession`, `VideoVariant`
+  * **Repositories**: `VideoRepository`, `UploadSessionRepository`, `VideoVariantRepository`
+  * **Enums**: `VideoStatus`, `UploadStatus`
+  * **Config**: `MinioConfig`, `MinioConfigProperties` (renamed from `MinioConfig` if properties separated)
+  * **Services**: `StorageService` (handles direct MinIO bucket access)
+  * **Exceptions**: `ProcessingException`, `VideoNotFoundException`, `UploadSessionExpiredException`, `InvalidFileTypeException`
 
 ---
 
-### 3. Upload Service Submodule (`upload-service`)
+### 3. Upload Service (`upload-service`)
 
-Exposes REST endpoints to create upload sessions, upload media files, and publish initial upload events to Kafka.
+Handles client ingestion operations, serves playback configs, and publishes events to Kafka.
 
 #### [NEW] [pom.xml](file:///Users/shreyanand/dev_proj/streamForage/upload-service/pom.xml)
-* Configure dependencies: `common` module, Spring Boot Starter Web, Spring Kafka, SpringDoc OpenAPI.
+* Include dependency on the `common` project module, Spring Boot Starter Web, Spring Kafka, SpringDoc OpenAPI, and Spring Boot Actuator.
 
-#### [NEW] `UploadEventProducer.java`
-* Implement Spring Kafka-based event publisher to emit events to `media.uploaded`.
-* Event model: `VideoUploadedEvent(UUID videoId, String title, String originalFilename, String storagePath, long fileSizeBytes)`.
+#### [NEW] `com.streamforge.upload.kafka.UploadEventProducer`
+* Handles publishing messages to the `media.uploaded` topic.
+* Provision topics automatically using Spring's `NewTopic` beans:
+  ```java
+  @Bean
+  public NewTopic mediaUploadedTopic() {
+      return TopicBuilder.name("media.uploaded")
+              .partitions(3)
+              .replicas(1)
+              .build();
+  }
+  ```
+* Publishes serialization-friendly record payloads:
+  ```java
+  public record VideoUploadedEvent(
+      UUID videoId,
+      String title,
+      String description,
+      String originalFilename,
+      String storagePath,
+      long fileSizeBytes
+  ) {}
+  ```
 
-#### [MOVE] API Controllers
-* Move `UploadController`, `VideoController` (listing/playback read endpoints only), `GlobalExceptionHandler`, and related DTO classes to `upload-service`.
-* Modify `UploadService.java` to save the raw file to MinIO and then publish the `VideoUploadedEvent` to Kafka instead of triggering processing synchronously.
+#### [MOVE] Ingestion Components
+* Move these files into `upload-service` under package `com.streamforge`:
+  * **Controllers**: `UploadController`, `VideoController`, `StreamController`
+  * **DTOs**: All Request and Response DTO records
+  * **Services**: `UploadService`, `VideoService` (modified to omit processing trigger logic)
+* **Modify `UploadService.completeSession()`**: After raw file assembly inside `StorageService`, publish a `VideoUploadedEvent` to the `media.uploaded` Kafka topic instead of calling `processingService.processVideoAsync()` directly.
 
 ---
 
-### 4. Worker Service Submodule (`worker-service`)
+### 4. Worker Service (`worker-service`)
 
-Asynchronous media processing worker subscribing to Kafka topics, running FFmpeg, and executing status updates.
+Headless, message-driven media pipeline worker.
 
 #### [NEW] [pom.xml](file:///Users/shreyanand/dev_proj/streamForage/worker-service/pom.xml)
-* Configure dependencies: `common` module, Spring Kafka, Spring Boot Starter Validation.
+* Include dependency on the `common` project module, Spring Kafka, Spring Boot Starter Actuator, and validation.
 
-#### [NEW] `MediaEventConsumers.java`
-* Subscribes to `media.uploaded` (or sub-topics like `media.transcode.requested`).
-* Orchestrates:
-  1. Checks idempotency using `processing_jobs` table.
-  2. Spawns processing pipelines: Metadata extraction $\rightarrow$ Transcoding $\rightarrow$ Thumbnail generation.
-  3. Updates database entities status.
-  4. Implements Kafka error recovery: Retrying transient errors and routing terminal failures to `media.failed.dlq`.
+#### [NEW] `com.streamforge.worker.kafka.MediaEventConsumer`
+* Subscribes to the `media.uploaded` topic using `@KafkaListener`.
+* Handles processing in a transaction-bound wrapper:
+  1. Enforces **Idempotency**: Generates an idempotency key `videoId + ":" + jobType`. Searches `processing_jobs` table. If the job status is `RUNNING` or `COMPLETED`, discards the message to prevent duplicate work.
+  2. Orchestrates media extraction, transcoding, and thumbnail rendering via wrapped FFmpeg execution.
+  3. Updates database status on completion.
 
-#### [MOVE] Processing Components
-* Move `ProcessingService`, `MetadataService`, `TranscodeService`, `ThumbnailService`, and `FFmpegUtil` to `worker-service`.
+#### [NEW] Error Handling & DLQ Configuration
+* Configure Spring's `DefaultErrorHandler` to catch exceptions thrown during processing:
+  * **Retry Policy**: Retry on transient failures (e.g. storage connection timeouts) up to **3 times** with an **exponential backoff** (initial interval of 2 seconds, multiplier of 2.0).
+  * **DLQ Recovery**: If retries are exhausted (or if a non-retryable exception like `InvalidFileTypeException` occurs), route the message to the Dead Letter Queue topic `media.uploaded.dlq` using Spring's `DeadLetterPublishingRecoverer`.
+  * **DLQ Consumer**: A simple consumer logging DLQ failures for administrative review.
+
+#### [MOVE] Media Utilities
+* Move processing files into `worker-service` under package `com.streamforge`:
+  * **Services**: `ProcessingService`, `MetadataService`, `TranscodeService`, `ThumbnailService`
+  * **Utils**: `FFmpegUtil`
+  * **Config**: `FFmpegProperties`, `ProcessingProperties`
+
+---
+
+## 🔄 Detailed Event Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant UploadApp as Upload Service
+    participant Database as PostgreSQL
+    participant Broker as Kafka (media.uploaded)
+    participant WorkerApp as Worker Service
+    participant S3 as MinIO (Object Storage)
+
+    Client->>UploadApp: POST /api/uploads/sessions/{sessionId}/file
+    UploadApp->>S3: Assemble & save raw file
+    UploadApp->>Database: Update Video status to 'UPLOADED'
+    UploadApp->>Broker: Publish VideoUploadedEvent
+    UploadApp-->>Client: 202 Accepted (Processing Queued)
+
+    Note over Broker, WorkerApp: Asynchronous Boundary
+
+    Broker->>WorkerApp: Deliver VideoUploadedEvent
+    WorkerApp->>Database: Check idempotency & insert 'RUNNING' processing_job
+    alt Already Processed or Running
+        WorkerApp-->>Broker: Acknowledge & Skip (Discard)
+    else New Job
+        WorkerApp->>S3: Download raw file to local work directory
+        WorkerApp->>WorkerApp: Run FFprobe (Metadata Extraction)
+        WorkerApp->>WorkerApp: Run FFmpeg (ABR Transcoding & Thumbnails)
+        WorkerApp->>S3: Upload processed variants, manifests, and poster
+        WorkerApp->>Database: Save VideoVariant details & update Video to 'PROCESSED'
+        WorkerApp->>Database: Update processing_job to 'COMPLETED'
+        WorkerApp->>WorkerApp: Clean up local temp files
+        WorkerApp-->>Broker: Acknowledge Offset (Commit)
+    end
+```
 
 ---
 
 ## 🔍 Verification Plan (Phase 2)
 
-### Manual E2E Flow
-1. **Infrastructure bootup:**
+### 1. Integration Testing (Automated)
+We will introduce integration tests inside `worker-service` using **Testcontainers**:
+* **`MediaProcessingKafkaIT`**:
+  * Spins up a PostgreSQL container and a Kafka broker container.
+  * Configures properties dynamically.
+  * Injects a `VideoUploadedEvent` to the `media.uploaded` topic.
+  * Verifies that the consumer executes successfully, updates the database, and uploads output files to MinIO.
+  * Verifies that duplicate events are discarded (idempotency checks).
+
+### 2. Manual E2E Verification
+1. **Boot Environment**:
    ```bash
+   docker compose down -v
    docker compose up --build -d
    ```
-2. **Kafka Event inspection:**
-   Monitor events being sent through the topics:
+2. **Listen to Event Stream**:
+   Open a separate shell to monitor published events:
    ```bash
    docker compose exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic media.uploaded --from-beginning
    ```
-3. **E2E Postman flows:**
-   Follow the sequence in `TESTING_GUIDE.md`:
-   * Post a session creation request.
-   * Upload an MP4 video file.
-   * Verify that the worker service picks up the Kafka event and begins transcoding asynchronously in the background.
-   * Query `http://localhost:8080/api/videos/{id}/status` until status is `SUCCEEDED`.
-   * Verify generated variants (`1080p`, `720p`, `480p`) in MinIO console (`http://localhost:9001`).
-   
-4. **Resilience Verification:**
-   * Run the worker container without FFmpeg configurations or send an invalid file format $\rightarrow$ Verify that the event is retried with backoff and eventually routes to the Dead Letter Queue (DLQ).
+3. **Run Ingestion Scenario**:
+   * Send the Postman/cURL sequences to create a session, upload a file, and complete the upload.
+   * Verify that the HTTP response returns **`202 Accepted`** instantly, and the `media.uploaded` event is displayed in the monitoring terminal.
+   * Monitor `worker-service` logs to observe the transcoding progress.
+   * Refresh `http://localhost:8080/static/player.html` and verify the video transitions to `Ready` status and streams correctly through the quality selector.
 
----
-
-## 🚦 Operational Guide — Docker Compose Operations (Phase 2 Stack)
-
-### 1. Starting the Application Stack
-To build the Docker images and run all services in the background:
-```bash
-docker compose up --build -d
-```
-
-### 2. Verifying and Running Queries
-To check container status and monitor logs:
-```bash
-# Check container status
-docker compose ps
-
-# Follow logs from the Upload Service application
-docker compose logs -f upload-service
-
-# Follow logs from the Worker Service application
-docker compose logs -f worker-service
-```
-
-### 3. Closing and Stopping the Application
-To stop running services:
-
-* **Stop services (retaining database volumes):**
-  ```bash
-  docker compose down
-  ```
-
-* **Stop services and purge all databases/object storage buckets:**
-  ```bash
-  docker compose down -v
-  ```
+### 3. Resilience & Failure Verification
+* **DLQ Validation**: 
+  * Inject a payload with an invalid file reference or trigger a mock processing error.
+  * Verify the consumer retries exactly 3 times before pushing the event to `media.uploaded.dlq`.
