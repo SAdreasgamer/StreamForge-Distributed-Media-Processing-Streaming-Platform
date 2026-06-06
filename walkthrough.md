@@ -433,6 +433,25 @@ graph TB
 | Upload Service | Request rate | 80% capacity | 2 | 10 |
 | Catalog Service | Request rate | 80% capacity | 2 | 8 |
 
+## 4. Phase 4: React Frontend Integration & Testing
+
+We built and integrated a premium, high-fidelity dark-themed React frontend using Vite and Tailwind CSS v4. The frontend runs on `http://localhost:5173` and communicates with the backend via proxying through the API Gateway (`http://localhost:8080`).
+
+### Features:
+1. **Interactive Upload Dropzone**: Supports drag-and-drop, valid mime-type validation, and tracks upload progress with an XHR-based progress bar.
+2. **Real-time Status Updates**: Subscribes to SockJS + STOMP WebSocket channels on `/ws/topic/video-status` to display live transcoding progression (`PENDING` $\rightarrow$ `UPLOADED` $\rightarrow$ `PROCESSING` $\rightarrow$ `PROCESSED`) without refreshing.
+3. **Advanced Playback (HLS.js)**: Integrates `hls.js` inside a custom HTML5 video player component that automatically parses the master playlist (`master.m3u8`) and streams appropriate quality variants dynamically.
+4. **Rich Metadata & Actions**: Provides catalog video details (fps, duration, resolution, codecs, file size), caching hits visual markers, and deletion functionality (automatically wiping DB metadata, S3 storage, and Redis cache).
+
+### E2E Testing Steps:
+1. **Frontend Server**: Accessible at `http://localhost:5173`.
+2. **Eureka Registry**: Access the Eureka Dashboard at `http://localhost:8761` to verify all 5 microservices (`API-GATEWAY`, `UPLOAD-SERVICE`, `CATALOG-SERVICE`, `WORKER-SERVICE`, `NOTIFICATION-SERVICE`) are registered.
+3. **Upload & Transcode**:
+   - Go to `http://localhost:5173/upload` and upload a video file.
+   - You will be redirected to the processing view, which will show real-time progress as the worker processes HLS segments.
+4. **Stream & Play**:
+   - Once processed, click the video to play it using HLS.js adaptive streaming.
+
 ### 8.3 CI/CD Pipeline (GitHub Actions)
 
 ```mermaid

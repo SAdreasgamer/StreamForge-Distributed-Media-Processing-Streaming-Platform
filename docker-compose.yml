@@ -1,23 +1,61 @@
 version: '3.8'
 
 services:
-  postgres:
+  # ── Upload Service Database ─────────────────────────────────────
+  upload-postgres:
     image: postgres:16-alpine
-    container_name: streamforge-postgres
+    container_name: streamforge-upload-postgres
     environment:
-      POSTGRES_DB: streamforge
+      POSTGRES_DB: upload_db
       POSTGRES_USER: streamforge
       POSTGRES_PASSWORD: streamforge_dev
     ports:
       - "5433:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - upload_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U streamforge"]
+      test: ["CMD-SHELL", "pg_isready -U streamforge -d upload_db"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ── Catalog Service Database ────────────────────────────────────
+  catalog-postgres:
+    image: postgres:16-alpine
+    container_name: streamforge-catalog-postgres
+    environment:
+      POSTGRES_DB: catalog_db
+      POSTGRES_USER: streamforge
+      POSTGRES_PASSWORD: streamforge_dev
+    ports:
+      - "5434:5432"
+    volumes:
+      - catalog_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streamforge -d catalog_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Worker Service Database ─────────────────────────────────────
+  worker-postgres:
+    image: postgres:16-alpine
+    container_name: streamforge-worker-postgres
+    environment:
+      POSTGRES_DB: worker_db
+      POSTGRES_USER: streamforge
+      POSTGRES_PASSWORD: streamforge_dev
+    ports:
+      - "5435:5432"
+    volumes:
+      - worker_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streamforge -d worker_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Object Storage (MinIO — S3 Compatible) ──────────────────────
   minio:
     image: minio/minio:latest
     container_name: streamforge-minio
@@ -50,6 +88,7 @@ services:
       echo 'Buckets created successfully';
       "
 
+  # ── Message Broker (Kafka — KRaft mode) ─────────────────────────
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: streamforge-kafka
@@ -72,33 +111,29 @@ services:
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ── StreamForge Application ────────────────────────────────────
-  streamforge-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: streamforge-app
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
-      kafka:
-        condition: service_healthy
-    environment:
-      SPRING_PROFILES_ACTIVE: docker
+  # ── Redis Cache ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: streamforge-redis
     ports:
-      - "8080:8080"
+      - "6379:6379"
     volumes:
-      - processing_temp:/tmp/streamforge/processing
-    restart: unless-stopped
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  postgres_data:
+  upload_postgres_data:
+  catalog_postgres_data:
+  worker_postgres_data:
   minio_data:
+  redis_data:
   processing_temp:

@@ -2,11 +2,9 @@ package com.streamforge.kafka;
 
 import com.streamforge.dto.event.VideoUploadedEvent;
 import com.streamforge.model.ProcessingJob;
-import com.streamforge.model.Video;
 import com.streamforge.model.enums.JobStatus;
 import com.streamforge.model.enums.JobType;
 import com.streamforge.repository.ProcessingJobRepository;
-import com.streamforge.repository.VideoRepository;
 import com.streamforge.service.ProcessingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,12 +21,11 @@ public class MediaEventConsumer {
 
     private final ProcessingService processingService;
     private final ProcessingJobRepository processingJobRepository;
-    private final VideoRepository videoRepository;
 
     @KafkaListener(topics = "media.uploaded", groupId = "media-processing-group")
     public void consumeVideoUploaded(VideoUploadedEvent event) {
         UUID videoId = event.videoId();
-        log.info("Received VideoUploadedEvent for video ID: {} (title: {})", videoId, event.title());
+        log.info("Received VideoUploadedEvent for video ID: {} (filename: {})", videoId, event.originalFilename());
         
         String idempotencyKey = videoId + ":" + JobType.TRANSCODE;
 
@@ -46,10 +43,8 @@ public class MediaEventConsumer {
             processingJobRepository.save(existingJob);
         } else {
             // New job, create record with RUNNING status
-            Video video = videoRepository.findById(videoId)
-                    .orElseThrow(() -> new IllegalArgumentException("Video not found: " + videoId));
             ProcessingJob newJob = ProcessingJob.builder()
-                    .video(video)
+                    .videoId(videoId)
                     .jobType(JobType.TRANSCODE)
                     .status(JobStatus.RUNNING)
                     .idempotencyKey(idempotencyKey)
@@ -60,7 +55,7 @@ public class MediaEventConsumer {
 
         try {
             // 2. Trigger the video processing pipeline (synchronously on the Kafka listener thread)
-            processingService.processVideo(videoId);
+            processingService.processVideo(videoId, event.storagePath(), event.originalFilename());
 
             // 3. Mark job as COMPLETED
             updateJobStatus(idempotencyKey, JobStatus.COMPLETED, null);
@@ -82,6 +77,6 @@ public class MediaEventConsumer {
 
     @KafkaListener(topics = "media.uploaded.DLT", groupId = "media-processing-group-dlt")
     public void consumeVideoUploadedDlt(VideoUploadedEvent event) {
-        log.error("Received message in Dead Letter Queue (DLQ) for video ID: {} (title: {})", event.videoId(), event.title());
+        log.error("Received message in Dead Letter Queue (DLQ) for video ID: {} (filename: {})", event.videoId(), event.originalFilename());
     }
 }

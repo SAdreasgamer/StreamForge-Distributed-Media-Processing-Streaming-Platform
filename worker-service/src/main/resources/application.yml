@@ -2,7 +2,7 @@ spring:
   application:
     name: worker-service
   datasource:
-    url: jdbc:postgresql://localhost:5433/streamforge
+    url: jdbc:postgresql://localhost:5435/worker_db
     username: streamforge
     password: streamforge_dev
     driver-class-name: org.postgresql.Driver
@@ -33,6 +33,11 @@ spring:
       properties:
         spring.json.trusted.packages: "com.streamforge.dto.event,com.streamforge.dto.event.*"
 
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+
 minio:
   endpoint: http://localhost:9000
   access-key: minioadmin
@@ -46,7 +51,7 @@ ffmpeg:
   timeout-seconds: 600
 
 processing:
-  temp-dir: /tmp/streamforge/processing
+  temp-dir: ./temp-processing
   resolutions:
     - label: "1080p"
       width: 1920
@@ -72,4 +77,4 @@ management:
         include: health,info,metrics
 
 server:
-  port: 8081
+  port: 8084

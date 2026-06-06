@@ -20,12 +20,17 @@
 
     <modules>
         <module>common</module>
+        <module>eureka-server</module>
+        <module>api-gateway</module>
         <module>upload-service</module>
+        <module>catalog-service</module>
+        <module>notification-service</module>
         <module>worker-service</module>
     </modules>
 
     <properties>
         <java.version>21</java.version>
+        <spring-cloud.version>2024.0.1</spring-cloud.version>
         <minio.version>8.5.13</minio.version>
         <springdoc.version>2.8.7</springdoc.version>
         <mapstruct.version>1.5.5.Final</mapstruct.version>
@@ -34,6 +39,15 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- ── Spring Cloud BOM ────────────────────────────────────── -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <!-- ── Object Storage (MinIO — S3 Compatible) ────────────── -->
             <dependency>
                 <groupId>io.minio</groupId>

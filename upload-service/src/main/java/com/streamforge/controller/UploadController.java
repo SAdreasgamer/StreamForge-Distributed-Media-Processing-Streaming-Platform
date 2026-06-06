@@ -37,7 +37,7 @@ public class UploadController {
     }
 
     @Operation(summary = "Upload video file")
-    @PostMapping(value = "/sessions/{sessionId}/file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PostMapping(value = "/{sessionId}/file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<VideoResponse> uploadFile(@PathVariable UUID sessionId, @RequestParam("file") MultipartFile file) {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(uploadService.uploadFile(sessionId, file));
     }
